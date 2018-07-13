@@ -124,21 +124,21 @@ if [ -t 1 ]; then
 fi
 
 __green() {
-  if [ "$__INTERACTIVE${ACME_NO_COLOR}" = "1" ]; then
+  if [ "$__INTERACTIVE${ACME_NO_COLOR}" = "1" -o "${ACME_FORCE_COLOR}" = "1" ]; then
     printf '\033[1;31;32m'
   fi
   printf -- "%b" "$1"
-  if [ "$__INTERACTIVE${ACME_NO_COLOR}" = "1" ]; then
+  if [ "$__INTERACTIVE${ACME_NO_COLOR}" = "1" -o "${ACME_FORCE_COLOR}" = "1" ]; then
     printf '\033[0m'
   fi
 }
 
 __red() {
-  if [ "$__INTERACTIVE${ACME_NO_COLOR}" = "1" ]; then
+  if [ "$__INTERACTIVE${ACME_NO_COLOR}" = "1" -o "${ACME_FORCE_COLOR}" = "1" ]; then
     printf '\033[1;31;40m'
   fi
   printf -- "%b" "$1"
-  if [ "$__INTERACTIVE${ACME_NO_COLOR}" = "1" ]; then
+  if [ "$__INTERACTIVE${ACME_NO_COLOR}" = "1" -o "${ACME_FORCE_COLOR}" = "1" ]; then
     printf '\033[0m'
   fi
 }
@@ -4287,20 +4287,21 @@ $_authorizations_map"
   Le_NextRenewTime=$(_math "$Le_NextRenewTime" - 86400)
   _savedomainconf "Le_NextRenewTime" "$Le_NextRenewTime"
 
-  if ! _on_issue_success "$_post_hook" "$_renew_hook"; then
-    _err "Call hook error."
-    return 1
-  fi
-
   if [ "$_real_cert$_real_key$_real_ca$_reload_cmd$_real_fullchain" ]; then
     _savedomainconf "Le_RealCertPath" "$_real_cert"
     _savedomainconf "Le_RealCACertPath" "$_real_ca"
     _savedomainconf "Le_RealKeyPath" "$_real_key"
     _savedomainconf "Le_ReloadCmd" "$_reload_cmd"
     _savedomainconf "Le_RealFullChainPath" "$_real_fullchain"
-    _installcert "$_main_domain" "$_real_cert" "$_real_key" "$_real_ca" "$_real_fullchain" "$_reload_cmd"
+    if ! _installcert "$_main_domain" "$_real_cert" "$_real_key" "$_real_ca" "$_real_fullchain" "$_reload_cmd"; then
+      return 1
+    fi
   fi
 
+  if ! _on_issue_success "$_post_hook" "$_renew_hook"; then
+    _err "Call hook error."
+    return 1
+  fi
 }
 
 #domain  [isEcc]
@@ -4675,19 +4676,19 @@ _installcert() {
     if [ -f "$_real_cert" ] && [ ! "$IS_RENEW" ]; then
       cp "$_real_cert" "$_backup_path/cert.bak"
     fi
-    cat "$CERT_PATH" >"$_real_cert"
+    cat "$CERT_PATH" >"$_real_cert" || return 1
   fi
 
   if [ "$_real_ca" ]; then
     _info "Installing CA to:$_real_ca"
     if [ "$_real_ca" = "$_real_cert" ]; then
       echo "" >>"$_real_ca"
-      cat "$CA_CERT_PATH" >>"$_real_ca"
+      cat "$CA_CERT_PATH" >>"$_real_ca" || return 1
     else
       if [ -f "$_real_ca" ] && [ ! "$IS_RENEW" ]; then
         cp "$_real_ca" "$_backup_path/ca.bak"
       fi
-      cat "$CA_CERT_PATH" >"$_real_ca"
+      cat "$CA_CERT_PATH" >"$_real_ca" || return 1
     fi
   fi
 
@@ -4697,9 +4698,9 @@ _installcert() {
       cp "$_real_key" "$_backup_path/key.bak"
     fi
     if [ -f "$_real_key" ]; then
-      cat "$CERT_KEY_PATH" >"$_real_key"
+      cat "$CERT_KEY_PATH" >"$_real_key" || return 1
     else
-      cat "$CERT_KEY_PATH" >"$_real_key"
+      cat "$CERT_KEY_PATH" >"$_real_key" || return 1
       chmod 600 "$_real_key"
     fi
   fi
@@ -4709,7 +4710,7 @@ _installcert() {
     if [ -f "$_real_fullchain" ] && [ ! "$IS_RENEW" ]; then
       cp "$_real_fullchain" "$_backup_path/fullchain.bak"
     fi
-    cat "$CERT_FULLCHAIN_PATH" >"$_real_fullchain"
+    cat "$CERT_FULLCHAIN_PATH" >"$_real_fullchain" || return 1
   fi
 
   if [ "$_reload_cmd" ]; then
@@ -5500,6 +5501,7 @@ Parameters:
   --ca-path                         Specifies directory containing CA certificates in PEM format, used by wget or curl.
   --nocron                          Only valid for '--install' command, which means: do not install the default cron job. In this case, the certs will not be renewed automatically.
   --no-color                        Do not output color text.
+  --force-color                     Force output of color text. Useful for non-interactive use with the aha tool for HTML E-Mails.
   --ecc                             Specifies to use the ECC cert. Valid for '--install-cert', '--renew', '--revoke', '--toPkcs' and '--createCSR'
   --csr                             Specifies the input csr.
   --pre-hook                        Command to be run before obtaining any certificates.
@@ -5514,6 +5516,7 @@ Parameters:
   --openssl-bin                     Specifies a custom openssl bin location.
   --use-wget                        Force to use wget, if you have both curl and wget installed.
   --yes-I-know-dns-manual-mode-enough-go-ahead-please  Force to use dns manual mode: $_DNS_MANUAL_WIKI
+  --branch, -b                      Only valid for '--upgrade' command, specifies the branch name to upgrade to.
   "
 }
 
@@ -5964,6 +5967,9 @@ _process() {
       --no-color)
         export ACME_NO_COLOR=1
         ;;
+      --force-color)
+        export ACME_FORCE_COLOR=1
+        ;;
       --ecc)
         _ecc="isEcc"
         ;;
@@ -6057,6 +6063,10 @@ _process() {
       --use-wget)
         _use_wget="1"
         ACME_USE_WGET="1"
+        ;;
+      --branch | -b)
+        export BRANCH="$2"
+        shift
         ;;
       *)
         _err "Unknown parameter : $1"
